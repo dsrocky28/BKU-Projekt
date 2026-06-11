@@ -1,0 +1,224 @@
+#include <Arduino.h>
+#include <ESP32Servo.h>
+#include "dcmotor.h"
+#include "max98357a.h"
+#include "ultrasonic.h"
+
+#define SERVO_PIN 37
+
+#define JOYSTICK_X_PIN 4
+#define JOYSTICK_SW_PIN 2
+
+#define DRIVE_MOTOR 1
+#define DRIVE_SPEED 100
+#define REVERSE_SPEED 25
+
+#define STOP_DISTANCE_CM 3.0
+#define REVERSE_TIME_MS 2000
+
+#define REVERSE_BEEP_FREQUENCY 900
+#define REVERSE_BEEP_DURATION_MS 600
+#define REVERSE_BEEP_PAUSE_MS 250
+
+Servo myServo;
+
+// Joystick-Mitte wird automatisch gemessen
+int joystickCenterX = 2048;
+
+// Deadzone: Bereich in der Mitte, wo der Servo stoppt
+const int DEADZONE = 300;
+
+// Continuous-Servo Werte
+// 1500 = Stopp
+const int SERVO_STOP_US = 1500;
+
+// Eine Seite
+const int SERVO_LEFT_MAX_US = 500;
+
+// Andere Seite
+const int SERVO_RIGHT_MAX_US = 2500;
+
+bool motorRunning = false;
+bool waitForButtonRelease = false;
+
+void reverseWithBeepSound() {
+  setDCSpeed(DRIVE_MOTOR, BACKWARD, REVERSE_SPEED);
+  motorRunning = true;
+
+  unsigned long reverseStart = millis();
+  while (millis() - reverseStart < REVERSE_TIME_MS) {
+    playTone(REVERSE_BEEP_FREQUENCY, REVERSE_BEEP_DURATION_MS);
+    delay(REVERSE_BEEP_DURATION_MS + REVERSE_BEEP_PAUSE_MS);
+  }
+
+  stopAudio();
+  stopDCMotor(DRIVE_MOTOR);
+  motorRunning = false;
+}
+
+int readSmoothedAnalog(int pin, int samples = 10) {
+  long sum = 0;
+
+  for (int i = 0; i < samples; i++) {
+    sum += analogRead(pin);
+    delayMicroseconds(300);
+  }
+
+  return sum / samples;
+}
+
+void calibrateJoystickCenter() {
+  long sum = 0;
+  const int samples = 100;
+
+  Serial.println("Joystick loslassen...");
+  Serial.println("Kalibriere Mitte...");
+  delay(1000);
+
+  for (int i = 0; i < samples; i++) {
+    sum += analogRead(JOYSTICK_X_PIN);
+    delay(5);
+  }
+
+  joystickCenterX = sum / samples;
+
+  Serial.print("Joystick Center X = ");
+  Serial.println(joystickCenterX);
+}
+
+void updateServoFromJoystick() {
+  int rawX = readSmoothedAnalog(JOYSTICK_X_PIN);
+  rawX = constrain(rawX, 0, 4095);
+
+  int diffX = rawX - joystickCenterX;
+
+  int servoCmd = SERVO_STOP_US;
+  String direction = "STOP";
+
+  // Mitte = Stopp
+  if (abs(diffX) <= DEADZONE) {
+    servoCmd = SERVO_STOP_US;
+    direction = "STOP";
+  }
+
+  // Joystick nach links
+  else if (diffX < -DEADZONE) {
+    servoCmd = map(
+      rawX,
+      joystickCenterX - DEADZONE,
+      0,
+      SERVO_STOP_US - 50,
+      SERVO_LEFT_MAX_US
+    );
+
+    direction = "LEFT";
+  }
+
+  // Joystick nach rechts
+  else if (diffX > DEADZONE) {
+    servoCmd = map(
+      rawX,
+      joystickCenterX + DEADZONE,
+      4095,
+      SERVO_STOP_US + 50,
+      SERVO_RIGHT_MAX_US
+    );
+
+    direction = "RIGHT";
+  }
+
+  servoCmd = constrain(servoCmd, SERVO_LEFT_MAX_US, SERVO_RIGHT_MAX_US);
+  myServo.writeMicroseconds(servoCmd);
+
+  Serial.print("X=");
+  Serial.print(rawX);
+
+  Serial.print(" Center=");
+  Serial.print(joystickCenterX);
+
+  Serial.print(" Diff=");
+  Serial.print(diffX);
+
+  Serial.print(" Direction=");
+  Serial.print(direction);
+
+  Serial.print(" ServoUS=");
+  Serial.print(servoCmd);
+}
+
+void updateMotorFromJoystickButton() {
+  bool buttonPressed = digitalRead(JOYSTICK_SW_PIN) == LOW;
+  float distanceCm = measureDistance(SENSOR_FRONT);
+  bool validDistance = distanceCm > 0;
+
+  if (waitForButtonRelease) {
+    if (!buttonPressed) {
+      waitForButtonRelease = false;
+    }
+
+    stopDCMotor(DRIVE_MOTOR);
+    motorRunning = false;
+    Serial.print(" DistanceCM=");
+    Serial.print(distanceCm);
+    Serial.println(" Motor=OFF_WAIT");
+    return;
+  }
+
+  if (buttonPressed && validDistance && distanceCm <= STOP_DISTANCE_CM) {
+    stopDCMotor(DRIVE_MOTOR);
+    delay(200);
+
+    Serial.print(" DistanceCM=");
+    Serial.print(distanceCm);
+    Serial.println(" Motor=REVERSE");
+    reverseWithBeepSound();
+    waitForButtonRelease = true;
+    return;
+  }
+
+  if (buttonPressed && !motorRunning) {
+    setDCSpeed(DRIVE_MOTOR, FORWARD, DRIVE_SPEED);
+    motorRunning = true;
+  }
+
+  if (!buttonPressed && motorRunning) {
+    stopDCMotor(DRIVE_MOTOR);
+    motorRunning = false;
+  }
+
+  Serial.print(" DistanceCM=");
+  Serial.print(distanceCm);
+  Serial.print(" Motor=");
+  Serial.println(motorRunning ? "ON" : "OFF");
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+
+  pinMode(JOYSTICK_SW_PIN, INPUT_PULLUP);
+
+  analogReadResolution(12);
+
+  myServo.setPeriodHertz(50);
+  myServo.attach(SERVO_PIN, SERVO_LEFT_MAX_US, SERVO_RIGHT_MAX_US);
+
+  initDCMotors(DC_MOTOR_1);
+  stopDCMotor(DRIVE_MOTOR);
+  initMAX98357A();
+
+  calibrateJoystickCenter();
+
+  myServo.writeMicroseconds(SERVO_STOP_US);
+
+  Serial.println("Servo und Motor Joystick Control gestartet");
+  Serial.println("Links/Rechts = Servo, Knopf gedrueckt = Motor Gas");
+  Serial.println("Ultraschall: bei 3 cm stoppen, 2 Sekunden rueckwaerts mit Piepser, dann warten");
+}
+
+void loop() {
+  updateServoFromJoystick();
+  updateMotorFromJoystickButton();
+
+  delay(80);
+}
