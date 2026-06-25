@@ -299,7 +299,7 @@ Durch dieses Projekt haben wir gelernt, wie man einen ESP32-S3-N16R8 mit verschi
 
 Wichtig war auch die Erkenntnis, dass Hardware-Projekte nicht nur aus Code bestehen. Die Verkabelung, die Stromversorgung und die richtige Pinbelegung sind genauso wichtig. Schon ein falscher Pin oder ein falsch angeschlossenes Kabel kann dazu führen, dass das ganze Projekt nicht funktioniert.
 
-Schwierig war, dass C++ am Anfang nicht einfach zu verstehen war. Es hätte geholfen, noch mehr einfache Übungen vor dem Projekt zu machen. Ausserdem war die Zeit für das Testen und die Fehlersuche eher knapp. Mehr Zeit für praktische Tests wäre besser gewesen.
+Schwierig war, dass C++ am Anfang nicht einfach zu verstehen war.
 
 Trotzdem war das Projekt sinnvoll, weil man direkt sehen konnte, wie Programmierung und Elektronik zusammenarbeiten. Das Auto war ein gutes Beispiel dafür, wie aus Code, Sensoren und Motoren ein funktionierendes System entsteht.
 
